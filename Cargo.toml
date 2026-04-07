@@ -16,6 +16,25 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive", "env"] }
+chrono = "0.4.43"
+reqwest = { version = "0.12", features = ["json"] }
+
+# Optional: Qwen3.5 embeddings for semantic similarity (slower but more accurate)
+candle-core = { git = "https://github.com/woodRock/candle", branch = "feat-qwen3.5-support", optional = true }
+candle-nn = { git = "https://github.com/woodRock/candle", branch = "feat-qwen3.5-support", optional = true }
+candle-transformers = { git = "https://github.com/woodRock/candle", branch = "feat-qwen3.5-support", optional = true }
+hf-hub = { version = "0.3", optional = true }
+tokenizers = { version = "0.20", optional = true }
+directories = "6.0.0"
+
+[features]
+default = []
+qwen-embeddings = ["candle-core", "candle-nn", "candle-transformers", "hf-hub", "tokenizers"]
+
+[dev-dependencies]
+tokio-test = "0.4"
+dotenvy = "0.15"
+reqwest = { version = "0.12", features = ["json"] }
 
 [profile.dist]
 inherits = "release"

@@ -2,26 +2,37 @@ use jmap_client::client::Client as JmapClient;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{tool_handler, ServerHandler};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 pub mod email;
+pub mod filters;
 pub mod submission;
 
 #[derive(Clone)]
 pub struct JmapServer {
     pub client: Arc<JmapClient>,
     pub account_id: Option<String>,
+    pub config: Arc<crate::jmap::JmapConfig>,
+    pub filters: Arc<RwLock<crate::jmap::NamedFiltersStore>>,
     pub tool_router: ToolRouter<JmapServer>,
 }
 
 impl JmapServer {
-    pub fn new(client: Arc<JmapClient>, account_id: Option<String>) -> Self {
+    pub fn new(
+        client: Arc<JmapClient>,
+        account_id: Option<String>,
+        config: Arc<crate::jmap::JmapConfig>,
+        filters: Arc<RwLock<crate::jmap::NamedFiltersStore>>,
+    ) -> Self {
         Self {
             client,
             account_id,
+            config,
+            filters,
             tool_router: {
                 let mut r = Self::public_email_router();
                 r.merge(Self::public_submission_router());
+                r.merge(Self::public_filters_router());
                 r
             },
         }
