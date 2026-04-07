@@ -7,7 +7,7 @@ repository = "https://github.com/example/jmap-mcp-rs"
 
 [dependencies]
 rmcp = { version = "0.11.0", features = ["server", "macros", "transport-io", "schemars"] }
-jmap-client = "0.4.0"
+jmap-client = {git = "https://github.com/stalwartlabs/jmap-client", version = "0.4.1"}
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -16,8 +16,9 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive", "env"] }
-chrono = "0.4.43"
-reqwest = { version = "0.12", features = ["json"] }
+chrono = "0.4"
+reqwest = { version = "0.13", features = ["json"] }
+directories = "6.0.0"
 
 # Optional: Qwen3.5 embeddings for semantic similarity (slower but more accurate)
 candle-core = { git = "https://github.com/woodRock/candle", branch = "feat-qwen3.5-support", optional = true }
@@ -25,7 +26,6 @@ candle-nn = { git = "https://github.com/woodRock/candle", branch = "feat-qwen3.5
 candle-transformers = { git = "https://github.com/woodRock/candle", branch = "feat-qwen3.5-support", optional = true }
 hf-hub = { version = "0.3", optional = true }
 tokenizers = { version = "0.20", optional = true }
-directories = "6.0.0"
 
 [features]
 default = []
@@ -34,7 +34,7 @@ qwen-embeddings = ["candle-core", "candle-nn", "candle-transformers", "hf-hub", 
 [dev-dependencies]
 tokio-test = "0.4"
 dotenvy = "0.15"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.13", features = ["json"] }
 
 [profile.dist]
 inherits = "release"
