@@ -3,7 +3,8 @@ name = "jmap-mcp-rs"
 version = "0.1.0"
 edition = "2021"
 description = "A JMAP MCP Server in Rust"
-repository = "https://github.com/example/jmap-mcp-rs"
+repository = "https://github.com/arlyon/jmap-mcp-rs"
+publish = false
 
 [dependencies]
 rmcp = { version = "0.11.0", features = ["server", "macros", "transport-io", "schemars"] }
@@ -26,6 +27,7 @@ candle-nn = { git = "https://github.com/woodRock/candle", branch = "feat-qwen3.5
 candle-transformers = { git = "https://github.com/woodRock/candle", branch = "feat-qwen3.5-support", optional = true }
 hf-hub = { version = "0.3", optional = true }
 tokenizers = { version = "0.20", optional = true }
+kreuzberg = { version = "4.9.8", default-features = false, features = ["html"] }
 
 [features]
 default = []

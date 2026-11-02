@@ -60,6 +60,10 @@ pub struct SearchEmailsArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetEmailsArgs {
     pub ids: Vec<String>,
+    /// Preferred body MIME type. This is a preference: if unavailable, another
+    /// available body representation is returned.
+    #[serde(rename = "mimeType", default)]
+    pub mime_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -708,16 +712,79 @@ impl JmapServer {
         client: &jmap_client::client::Client,
         ids: Vec<String>,
     ) -> anyhow::Result<Vec<jmap_client::email::Email>> {
-        let mut emails = Vec::new();
-        for id in ids {
-            let email = client
-                .email_get(&id, Option::<Vec<jmap_client::email::Property>>::None)
-                .await?;
-            if let Some(e) = email {
-                emails.push(e);
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut request = client.build();
+        request
+            .get_email()
+            .ids(ids)
+            .arguments()
+            .fetch_all_body_values(true)
+            .max_body_value_bytes(1024 * 1024);
+
+        let mut response = request
+            .send_single::<jmap_client::core::response::EmailGetResponse>()
+            .await?;
+
+        Ok(response.take_list())
+    }
+
+    /// Select one body representation per email. Prefer the requested MIME type
+    /// when available, otherwise plain text, then converted HTML as Markdown.
+    fn select_email_body(value: &mut serde_json::Value, preferred_mime: Option<&str>) {
+        let Some(object) = value.as_object_mut() else {
+            return;
+        };
+        let html_available = object
+            .get("htmlBody")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|parts| !parts.is_empty());
+        object.insert("htmlAvailable".into(), json!(html_available));
+
+        let body_values = object.get("bodyValues").and_then(serde_json::Value::as_object);
+        let find_body = |property: &str| -> Option<String> {
+            let parts = object.get(property)?.as_array()?;
+            parts.iter().find_map(|part| {
+                let id = part.get("partId")?.as_str()?;
+                let value = body_values?.get(id)?.get("value")?.as_str()?;
+                Some(value.to_owned())
+            })
+        };
+
+        let plain = find_body("textBody");
+        let html = find_body("htmlBody");
+        let selected = match preferred_mime {
+            Some("text/plain") => plain.clone().map(|body| (body, "text/plain")),
+            Some("text/html") => html.clone().map(|body| (body, "text/html")),
+            _ => None,
+        }
+        .or_else(|| plain.map(|body| (body, "text/plain")))
+        .or_else(|| html.map(|body| (Self::html_to_markdown(&body), "text/markdown")));
+
+        if let Some((body, mime)) = selected {
+            object.insert("bodyMimeType".into(), json!(mime));
+            object.insert("body".into(), json!(body));
+        } else {
+            object.insert("bodyMimeType".into(), serde_json::Value::Null);
+            object.insert("body".into(), serde_json::Value::Null);
+        }
+        object.remove("bodyValues");
+    }
+
+    fn html_to_markdown(html: &str) -> String {
+        match kreuzberg::extract_bytes_sync(
+            html.as_bytes(),
+            "text/html",
+            &kreuzberg::ExtractionConfig::default(),
+        ) {
+            Ok(result) => result.content,
+            Err(e) => {
+                tracing::warn!("HTML-to-Markdown conversion failed: {}", e);
+                html.to_string()
             }
         }
-        Ok(emails)
     }
 
     pub async fn get_threads_impl(
@@ -958,7 +1025,7 @@ impl JmapServer {
         .unwrap()]))
     }
 
-    #[tool(description = "Retrieve full details (body, headers) for specific IDs.")]
+    #[tool(description = "Retrieve full details for specific IDs. mimeType is a preference; each email returns the best available body, preferring that MIME type, then text/plain, then HTML converted to text/markdown. htmlAvailable indicates whether an HTML body exists.")]
     async fn get_emails(
         &self,
         Parameters(args): Parameters<GetEmailsArgs>,
@@ -967,8 +1034,17 @@ impl JmapServer {
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
+        let emails_json: Vec<serde_json::Value> = emails
+            .iter()
+            .map(|email| {
+                let mut value = serde_json::to_value(email).unwrap_or(serde_json::Value::Null);
+                Self::select_email_body(&mut value, args.mime_type.as_deref());
+                value
+            })
+            .collect();
+
         Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            json!({ "emails": emails }),
+            json!({ "emails": emails_json }),
         )
         .unwrap()]))
     }
@@ -1116,6 +1192,49 @@ impl JmapServer {
 #[cfg(test)]
 mod tests {
     use super::diversity::select_diverse_subjects;
+    use super::JmapServer;
+    use serde_json::json;
+
+    fn email_with_bodies() -> serde_json::Value {
+        json!({
+            "textBody": [{"partId": "plain", "type": "text/plain"}],
+            "htmlBody": [{"partId": "html", "type": "text/html"}],
+            "bodyValues": {
+                "plain": {"value": "Plain body"},
+                "html": {"value": "<p><strong>HTML body</strong></p>"}
+            }
+        })
+    }
+
+    #[test]
+    fn selects_preferred_available_body_and_prunes_alternatives() {
+        let mut email = email_with_bodies();
+        JmapServer::select_email_body(&mut email, Some("text/plain"));
+        assert_eq!(email["body"], "Plain body");
+        assert_eq!(email["bodyMimeType"], "text/plain");
+        assert_eq!(email["htmlAvailable"], true);
+        assert!(email.get("bodyValues").is_none());
+    }
+
+    #[test]
+    fn falls_back_from_unavailable_preference_to_plain_text() {
+        let mut email = email_with_bodies();
+        JmapServer::select_email_body(&mut email, Some("application/json"));
+        assert_eq!(email["body"], "Plain body");
+        assert_eq!(email["bodyMimeType"], "text/plain");
+    }
+
+    #[test]
+    fn converts_html_to_markdown_when_plain_text_is_missing() {
+        let mut email = json!({
+            "htmlBody": [{"partId": "html", "type": "text/html"}],
+            "bodyValues": {"html": {"value": "<p><strong>HTML body</strong></p>"}}
+        });
+        JmapServer::select_email_body(&mut email, Some("text/plain"));
+        assert_eq!(email["bodyMimeType"], "text/markdown");
+        assert!(email["body"].as_str().unwrap().contains("HTML body"));
+        assert_eq!(email["htmlAvailable"], true);
+    }
 
     #[test]
     fn test_select_diverse_subjects_empty() {

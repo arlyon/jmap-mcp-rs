@@ -20,6 +20,18 @@ pub struct SendEmailArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct SaveDraftArgs {
+    pub from: String,
+    pub to: Vec<String>,
+    pub cc: Option<Vec<String>>,
+    pub subject: Option<String>,
+    #[serde(rename = "textBody")]
+    pub text_body: Option<String>,
+    #[serde(rename = "htmlBody")]
+    pub html_body: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReplyToEmailArgs {
     #[serde(rename = "emailId")]
     pub email_id: String,
@@ -229,6 +241,59 @@ impl JmapServer {
 
         Ok(CallToolResult::success(vec![rmcp::model::Content::text(
             "Email sent successfully",
+        )]))
+    }
+
+    #[tool(description = "Save a message as a draft without sending it.")]
+    async fn save_draft(
+        &self,
+        Parameters(args): Parameters<SaveDraftArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // Get the Drafts mailbox ID
+        let drafts_mailbox_id = self.get_drafts_mailbox_id().await.map_err(|e| {
+            ErrorData::internal_error(format!("Failed to get Drafts mailbox: {}", e), None)
+        })?;
+
+        let mut request = self.client.build();
+
+        let draft = request.set_email().create();
+
+        draft.from(vec![args.from.as_str()]);
+        draft.to(args.to.clone());
+        if let Some(cc) = args.cc {
+            draft.cc(cc);
+        }
+        if let Some(subject) = args.subject {
+            draft.subject(subject);
+        }
+
+        draft.mailbox_ids([&drafts_mailbox_id]);
+        draft.keywords(["$draft"]);
+
+        if let Some(body) = args.text_body {
+            let part_id = "body";
+            draft.body_value(part_id.to_string(), body);
+
+            let part = EmailBodyPart::new()
+                .part_id(part_id)
+                .content_type("text/plain");
+            draft.text_body(part);
+        } else if let Some(html) = args.html_body {
+            let part_id = "body";
+            draft.body_value(part_id.to_string(), html);
+
+            let part = EmailBodyPart::new()
+                .part_id(part_id)
+                .content_type("text/html");
+            draft.html_body(part);
+        }
+
+        request.send().await.map_err(|e| {
+            ErrorData::internal_error(format!("Failed to save draft: {}", e), None)
+        })?;
+
+        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+            "Draft saved successfully",
         )]))
     }
 

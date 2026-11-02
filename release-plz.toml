@@ -1,0 +1,8 @@
+[workspace]
+git_only = true
+release_always = false
+semver_check = false
+
+[[package]]
+name = "jmap-mcp-rs"
+git_tag_name = "v{{ version }}"
